@@ -73,7 +73,7 @@ class DurakState : public State {
   // Core API from open_spiel::State
   Player CurrentPlayer() const override;
   std::vector<Action> LegalActions() const override;
-  std::string ActionToString(Player player, Action action_id) const override;
+  std::string ActionToString(Player player, Action move) const override;
   bool IsTerminal() const override;
   std::vector<double> Returns() const override;
   std::string ToString() const override;

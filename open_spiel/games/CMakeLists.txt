@@ -59,6 +59,8 @@ set(GAME_SOURCES
   deep_sea/deep_sea.h
   dots_and_boxes/dots_and_boxes.cc
   dots_and_boxes/dots_and_boxes.h
+  durak/durak.cc
+  durak/durak.h
   dynamic_routing/dynamic_routing_data.cc
   dynamic_routing/dynamic_routing_data.h
   dynamic_routing/dynamic_routing_utils.cc

@@ -345,6 +345,18 @@ class DurakState(pyspiel.State):
 
         return sorted(actions)
 
+    def _action_to_string(self, player: int, action: int) -> str:
+        if action == ExtraAction.TAKE_CARDS: 
+            return "TAKE_CARDS"
+        elif action == ExtraAction.FINISH_ATTACK: 
+            return "FINISH_ATTACK"
+        elif action == ExtraAction.FINISH_DEFENSE:
+            return "FINISH_DEFENSE"
+        elif 0 <= action < _NUM_CARDS:
+            return f"Play: {card_to_string(action)}"
+        else:
+            return f"Unknown ({action})"
+
     def _apply_action(self, action: int):
         if self.is_chance_node():
             self._apply_chance_action(action)

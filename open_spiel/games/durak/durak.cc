@@ -477,6 +477,21 @@ std::vector<Action> DurakState::LegalActions() const {
 }
 
 std::string DurakState::ActionToString(Player /*player*/, Action action_id) const {
+  if (action_id == kExtraActionTakeCards) {
+    return "TAKE_CARDS";
+  } else if (action_id == kExtraActionFinishAttack) {
+    return "FINISH_ATTACK";
+  } else if (action_id == kExtraActionFinishDefense) {
+    return "FINISH_DEFENSE";
+  } else if (action_id >= 0 && action_id < kNumCards) {
+    // kNumCards is 36 in your Durak
+    return absl::StrCat("Play:", CardToString(action_id));
+  } else {
+    return absl::StrCat("UnknownAction(", action_id, ")");
+  }
+}
+
+std::string DurakState::ActionToString(Player /*player*/, Action action_id) const {
   if (action_id == kExtraActionTakeCards) return "TAKE_CARDS";
   if (action_id == kExtraActionFinishAttack) return "FINISH_ATTACK";
   if (action_id == kExtraActionFinishDefense) return "FINISH_DEFENSE";
