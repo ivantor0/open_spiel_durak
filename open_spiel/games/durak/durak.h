@@ -46,6 +46,9 @@ inline std::string CardToString(int card) {
   return std::string(rank_symbols[r]) + suit_symbols[s];
 }
 
+// Implement deck shuffling.
+void ShuffleDeck(std::mt19937* rng, std::vector<int>& deck, int begin, int end);
+
 // Forward declarations
 class DurakGame;
 class DurakObserver;
@@ -109,6 +112,9 @@ class DurakState : public State {
   std::vector<std::pair<int, int>> table_cards_;
   std::vector<int> discard_;
 
+  // Random number generator seed
+  int rng_seed_ = 0;
+
   // Which suit is trump? 0..3, or -1 if unknown.
   int trump_suit_ = -1;
   // The actual trump card index, or -1 if not revealed yet.
@@ -148,9 +154,6 @@ class DurakGame : public Game {
   double MinUtility() const override { return -1.0; }
   double MaxUtility() const override { return 1.0; }
   absl::optional<double> UtilitySum() const override { return 0.0; }
-
-  // Implement deck shuffling.
-  void ShuffleDeck(std::mt19937* rng, std::vector<int> deck, int begin, int end);
 
   // For Durak, a safe upper bound on game length could be fairly high.
   int MaxGameLength() const override { return 300; }

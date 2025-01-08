@@ -70,31 +70,13 @@ REGISTER_SPIEL_GAME(kGameType, Factory);
 DurakGame::DurakGame(const GameParameters& params)
     : Game(kGameType, params),
       rng_seed_(ParameterValue<int>("rng_seed")) {
-  // If "init_deck" was not specified, we fill it with a freshly shuffled deck.
-  std::string init_deck = ParameterValue<std::string>("init_deck", "");
-  if (init_deck.empty()) {
-    std::vector<int> deck(kNumCards);
-    for (int i = 0; i < kNumCards; i++) deck[i] = i;
-    // Create a reproducible random engine.
-    std::mt19937 rng(rng_seed_);
-
-    ShuffleDeck(&rng, /*deck=*/deck, /*begin=*/0, /*end=*/kNumCards);
-
-    std::ostringstream oss;
-    for (int i = 0; i < kNumCards; i++) {
-      if (i > 0) oss << ",";
-      oss << deck[i];
-    }
-    init_deck = oss.str();
-    game_parameters_["init_deck"] = GameParameter(init_deck);
-  }
 }
 
 std::unique_ptr<State> DurakGame::NewInitialState() const {
   return std::unique_ptr<State>(new DurakState(shared_from_this(), rng_seed_));
 }
 
-void DurakGame::ShuffleDeck(std::mt19937* rng, std::vector<int> deck, int begin, int end) {
+void ShuffleDeck(std::mt19937* rng, std::vector<int>& deck, int begin, int end) {
   for (int i = begin; i < end - 1; ++i) {
     int j = i + (*rng)() % (end - i);
     std::swap(deck[i], deck[j]);
@@ -149,20 +131,32 @@ std::shared_ptr<Observer> DurakGame::MakeObserver(
 // -----------------------------------------------------------------------------
 
 DurakState::DurakState(std::shared_ptr<const Game> game, int rng_seed)
-    : State(game) {
-  // 1) Parse the deck from the game param "init_deck".
+    : State(game), rng_seed_(rng_seed) {  // Initialize rng_seed_
   const DurakGame* durak_game = down_cast<const DurakGame*>(game.get());
-  std::string deck_str = durak_game->GetParameters().at("init_deck").string_value();
+  auto param_map = durak_game->GetParameters();
+  auto it = param_map.find("init_deck");
+  std::string deck_str = (it != param_map.end()) ? it->second.string_value() : "";
 
-  deck_.reserve(kNumCards);
-  {
+  if (deck_str.empty()) {
+    // Initialize a standard ordered deck
+    for (int i = 0; i < kNumCards; i++) {
+      deck_.push_back(i);
+    }
+
+    // Create a reproducible random engine
+    std::mt19937 rng(rng_seed_);
+
+    // Shuffle the deck using the free function
+    ShuffleDeck(&rng, deck_, 0, kNumCards);
+  } else {
+    // Parse the deck string
     std::stringstream ss(deck_str);
     for (int i = 0; i < kNumCards; i++) {
       int c;
       char comma;
       ss >> c;
       deck_.push_back(c);
-      if (i < kNumCards - 1) ss >> comma;  // consume the comma
+      if (i < kNumCards - 1) ss >> comma;  // consume comma
     }
   }
 
