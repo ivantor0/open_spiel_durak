@@ -1,11 +1,3 @@
-// Copyright 2025
-// Based on the MIT-licensed Durak implementation by Manuel Boesl and Borislav Radev
-// and your Python translation in OpenSpiel.
-//
-// Durak is a turn-based card game for 2 players with imperfect information.
-//
-// This is the header file (durak.h) for the C++ implementation in OpenSpiel.
-
 #ifndef OPEN_SPIEL_GAMES_DURAK_H_
 #define OPEN_SPIEL_GAMES_DURAK_H_
 
@@ -25,23 +17,21 @@ namespace durak {
 // Global definitions and constants
 // -----------------------------------------------------------------------------
 
-// Basic game settings for 2-player Durak.
 constexpr int kNumPlayers = 2;
 constexpr int kNumCards = 36;          // 9 ranks (6..A) * 4 suits
-constexpr int kCardsPerPlayer = 6;     // Each player is refilled up to 6 cards
+constexpr int kCardsPerPlayer = 6;
 constexpr int kExtraActionTakeCards      = kNumCards;     // 36
 constexpr int kExtraActionFinishAttack   = kNumCards + 1; // 37
 constexpr int kExtraActionFinishDefense  = kNumCards + 2; // 38
 
-// RoundPhase enumerates the high-level flow of the game.
 enum class RoundPhase {
-  kChance = 0,      // Dealing initial cards (and revealing trump)
-  kAttack = 1,      // Attacker(s) placing cards
-  kDefense = 2,     // Defender trying to cover
-  kAdditional = 3   // Attacker can add more cards after all current ones covered
+  kChance = 0,
+  kAttack = 1,
+  kDefense = 2,
+  kAdditional = 3
 };
 
-// Helper inline functions to get suit/rank from a 0..35 card index.
+// Helper functions to interpret 0..35 as card indices.
 inline int SuitOf(int card) { return card / 9; }
 inline int RankOf(int card) { return card % 9; }
 
@@ -66,14 +56,14 @@ class DurakObserver;
 
 class DurakState : public State {
  public:
-  explicit DurakState(std::shared_ptr<const Game> game);
+  explicit DurakState(std::shared_ptr<const Game> game, int rng_seed);
   DurakState(const DurakState&) = default;
   DurakState& operator=(const DurakState&) = delete;
 
-  // Core API from open_spiel::State
+  // Core API
   Player CurrentPlayer() const override;
   std::vector<Action> LegalActions() const override;
-  std::string ActionToString(Player player, Action move) const override;
+  std::string ActionToString(Player player, Action action_id) const override;
   bool IsTerminal() const override;
   std::vector<double> Returns() const override;
   std::string ToString() const override;
@@ -113,19 +103,10 @@ class DurakState : public State {
   void RefillHands();
   void CheckGameOver();
 
-  // ---------- Game State Members ----------
-
-  // The deck of 36 cards. We store the order (top to bottom). The bottom card is
-  // the trump reveal in classical Durak, but we keep it in the deck until reveal.
-  std::vector<int> deck_;
-
-  // Each player's hand of card indices.
+  // Game state
+  std::vector<int> deck_;  
   std::array<std::vector<int>, kNumPlayers> hands_;
-
-  // The table: each element is (attacking_card, defending_card_or_null).
-  std::vector<std::pair<int, int>> table_cards_;  // If defending_card is -1 => None
-
-  // Discard pile for fully-covered cards.
+  std::vector<std::pair<int, int>> table_cards_;
   std::vector<int> discard_;
 
   // Which suit is trump? 0..3, or -1 if unknown.
@@ -152,7 +133,7 @@ class DurakState : public State {
 };
 
 // -----------------------------------------------------------------------------
-// DurakGame: the factory and top-level game object
+// DurakGame
 // -----------------------------------------------------------------------------
 
 class DurakGame : public Game {
@@ -167,6 +148,9 @@ class DurakGame : public Game {
   double MinUtility() const override { return -1.0; }
   double MaxUtility() const override { return 1.0; }
   absl::optional<double> UtilitySum() const override { return 0.0; }
+
+  // Implement deck shuffling.
+  void ShuffleDeck(std::mt19937* rng, std::vector<int> deck, int begin, int end);
 
   // For Durak, a safe upper bound on game length could be fairly high.
   int MaxGameLength() const override { return 300; }
@@ -183,11 +167,13 @@ class DurakGame : public Game {
   std::shared_ptr<Observer> MakeObserver(
       absl::optional<IIGObservationType> iig_obs_type,
       const GameParameters& params) const override;
+
+ private:
+  mutable int rng_seed_ = 0;
 };
 
 // -----------------------------------------------------------------------------
-// An Observer that can produce both a string and a tensor, using iig_obs_type
-// to decide which pieces of private/public information to expose.
+// An Observer
 // -----------------------------------------------------------------------------
 
 class DurakObserver : public Observer {

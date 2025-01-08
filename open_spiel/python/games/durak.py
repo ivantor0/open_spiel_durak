@@ -251,10 +251,10 @@ class DurakState(pyspiel.State):
             next_card = self._deck[self._deck_pos]
             return [(next_card, 1.0)]
         else:
-            # Next step is to reveal the bottom card as trump
+            # Next step is to reveal the next card as trump
             if self._trump_card is None:
-                bottom_card = self._deck[-1]
-                return [(bottom_card, 1.0)]
+                trump_card = self._deck[self._deck_pos]
+                return [(trump_card, 1.0)]
             return []
 
     def _apply_chance_action(self, outcome: int):
@@ -265,9 +265,9 @@ class DurakState(pyspiel.State):
             self._deck_pos += 1
             self._cards_dealt += 1
         else:
-            # Reveal the bottom card as trump
-            self._trump_card = outcome
-            self._trump_suit = suit_of(outcome)
+            # Reveal the last card as trump
+            self._trump_card = self._deck[-1]
+            self._trump_suit = suit_of(self._deck[-1])
             self._decide_first_attacker()
             self._phase = RoundPhase.ATTACK
             self._round_starter = self._attacker

@@ -404,6 +404,10 @@ add_executable(dots_and_boxes_test dots_and_boxes/dots_and_boxes_test.cc ${OPEN_
                $<TARGET_OBJECTS:tests>)
 add_test(dots_and_boxes_test dots_and_boxes_test)
 
+add_executable(durak_test durak/durak_test.cc ${OPEN_SPIEL_OBJECTS}
+               $<TARGET_OBJECTS:tests>)
+add_test(durak_test durak_test)
+
 add_executable(dynamic_routing_data_test dynamic_routing/dynamic_routing_data_test.cc ${OPEN_SPIEL_OBJECTS}
                $<TARGET_OBJECTS:tests>)
 add_test(dynamic_routing_data_test dynamic_routing_data_test)

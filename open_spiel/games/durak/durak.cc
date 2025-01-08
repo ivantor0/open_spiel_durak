@@ -3,10 +3,11 @@
 //
 // durak.cc: logic, state transitions, observer, etc.
 
-#include "open_spiel/games/durak.h"
+#include "open_spiel/games/durak/durak.h"
 
 #include <algorithm>
 #include <random>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -19,7 +20,7 @@ namespace open_spiel {
 namespace durak {
 namespace {
 
-// GameType registration. 
+// Construct a GameType object with enough info for standard usage.
 const GameType kGameType{
     /*short_name=*/"durak",
     /*long_name=*/"Durak",
@@ -34,14 +35,16 @@ const GameType kGameType{
     /*provides_information_state_tensor=*/true,
     /*provides_observation_string=*/true,
     /*provides_observation_tensor=*/true,
-    /*parameter_specification=*/{},
+    /*parameter_specification=*/{
+      {"init_deck", GameParameter(std::string(""))},
+      {"rng_seed", GameParameter(0)},
+    },
     /*default_loadable=*/true,
     /*provides_factored_observation_string=*/true
 };
 
-// Corresponding GameInfo for usage in c++.
 const GameInfo kGameInfo{
-    /*num_distinct_actions=*/kNumCards + 3,  // 36 card-play actions + 3 extras
+    /*num_distinct_actions=*/kNumCards + 3,
     /*max_chance_outcomes=*/kNumCards,
     /*num_players=*/kNumPlayers,
     /*min_utility=*/-1.0,
@@ -50,7 +53,7 @@ const GameInfo kGameInfo{
     /*max_game_length=*/300
 };
 
-// Factory for creating the game from parameters.
+// Register the game with OpenSpiel
 std::shared_ptr<const Game> Factory(const GameParameters& params) {
   return std::make_shared<DurakGame>(params);
 }
@@ -65,12 +68,37 @@ REGISTER_SPIEL_GAME(kGameType, Factory);
 // -----------------------------------------------------------------------------
 
 DurakGame::DurakGame(const GameParameters& params)
-    : Game(kGameType, kGameInfo, params) {
-  // No special parameters in this example. Could parse them if needed.
+    : Game(kGameType, params),
+      rng_seed_(ParameterValue<int>("rng_seed")) {
+  // If "init_deck" was not specified, we fill it with a freshly shuffled deck.
+  std::string init_deck = ParameterValue<std::string>("init_deck", "");
+  if (init_deck.empty()) {
+    std::vector<int> deck(kNumCards);
+    for (int i = 0; i < kNumCards; i++) deck[i] = i;
+    // Create a reproducible random engine.
+    std::mt19937 rng(rng_seed_);
+
+    ShuffleDeck(&rng, /*deck=*/deck, /*begin=*/0, /*end=*/kNumCards);
+
+    std::ostringstream oss;
+    for (int i = 0; i < kNumCards; i++) {
+      if (i > 0) oss << ",";
+      oss << deck[i];
+    }
+    init_deck = oss.str();
+    game_parameters_["init_deck"] = GameParameter(init_deck);
+  }
 }
 
 std::unique_ptr<State> DurakGame::NewInitialState() const {
-  return std::unique_ptr<State>(new DurakState(shared_from_this()));
+  return std::unique_ptr<State>(new DurakState(shared_from_this(), rng_seed_));
+}
+
+void DurakGame::ShuffleDeck(std::mt19937* rng, std::vector<int> deck, int begin, int end) {
+  for (int i = begin; i < end - 1; ++i) {
+    int j = i + (*rng)() % (end - i);
+    std::swap(deck[i], deck[j]);
+  }
 }
 
 std::vector<int> DurakGame::InformationStateTensorShape() const {
@@ -82,7 +110,6 @@ std::vector<int> DurakGame::InformationStateTensorShape() const {
   //     [2] (which player) + 4 (trump_suit) + 4 (phase) + 1 (deck_size) +
   //     2 (attacker_ind, defender_ind) + 36 (trump_card) + 36 (my_cards) + ...
   // We'll just define a possible dimension that matches the Python approach.
-  // If you want a more compact or different shape, you can adjust accordingly.
 
   // As a rough total:
   //   player: 2
@@ -93,12 +120,8 @@ std::vector<int> DurakGame::InformationStateTensorShape() const {
   //   trump_card: 36
   //   my_cards: 36
   //   table_attack + table_defense: 36 + 36 = 72  (if perfect recall or public info)
-  // You can refine or split it. We'll just unify with the python logic, which had
-  // a total "flat" dimension of 2 + 4 + 4 + 1 + 1 + 1 + 36 + 36 + 36 + 36 = 157 or so
-  // depending on which info you include. 
 
-  // For simplicity, let's choose a single large dimension. In practice, you'd be consistent
-  // with how you handle iig_obs_type. If "public info" is off, we might exclude table info.
+  // For simplicity, let's choose a single large dimension.
   // We'll just give a max shape for the union of all possibilities.
   return {157};  // A single vector dimension that can store all bits.
 }
@@ -112,28 +135,38 @@ std::vector<int> DurakGame::ObservationTensorShape() const {
 std::shared_ptr<Observer> DurakGame::MakeObserver(
     absl::optional<IIGObservationType> iig_obs_type,
     const GameParameters& params) const {
-  // If params is non-empty, you could parse them. Here we skip that.
-  return std::make_shared<DurakObserver>(
-      iig_obs_type.value_or(IIGObservationType(
-          /*public_info=*/false, /*perfect_recall=*/false,
-          /*private_info=*/PrivateInfoType::kSinglePlayer)));
+  // Construct or fill out the fields on IIGObservationType:
+  IIGObservationType obs_type = iig_obs_type.value_or(IIGObservationType());
+  obs_type.public_info = false;
+  obs_type.perfect_recall = false;
+  obs_type.private_info = PrivateInfoType::kSinglePlayer;
+
+  return std::make_shared<DurakObserver>(obs_type);
 }
 
 // -----------------------------------------------------------------------------
 // DurakState implementation
 // -----------------------------------------------------------------------------
 
-DurakState::DurakState(std::shared_ptr<const Game> game)
+DurakState::DurakState(std::shared_ptr<const Game> game, int rng_seed)
     : State(game) {
-  // Create a 36-card deck
+  // 1) Parse the deck from the game param "init_deck".
+  const DurakGame* durak_game = down_cast<const DurakGame*>(game.get());
+  std::string deck_str = durak_game->GetParameters().at("init_deck").string_value();
+
   deck_.reserve(kNumCards);
-  for (int c = 0; c < kNumCards; ++c) deck_.push_back(c);
+  {
+    std::stringstream ss(deck_str);
+    for (int i = 0; i < kNumCards; i++) {
+      int c;
+      char comma;
+      ss >> c;
+      deck_.push_back(c);
+      if (i < kNumCards - 1) ss >> comma;  // consume the comma
+    }
+  }
 
-  // Shuffle it. 
-  // (OpenSpiel has a built-in function if needed, or you can do std::shuffle.)
-  std::shuffle(deck_.begin(), deck_.end(), std::mt19937(std::random_device()()));
-
-  // Initialize hands, table, discard, etc.
+  // 2) Initialize hands, table, discard, etc.
   for (int p = 0; p < kNumPlayers; ++p) {
     hands_[p].clear();
   }
@@ -143,6 +176,7 @@ DurakState::DurakState(std::shared_ptr<const Game> game)
   trump_card_ = -1;
   cards_dealt_ = 0;
   deck_pos_ = 0;
+
   attacker_ = 0;
   defender_ = 1;
   phase_ = RoundPhase::kChance;
@@ -165,7 +199,6 @@ bool DurakState::IsTerminal() const {
 }
 
 std::vector<double> DurakState::Returns() const {
-  // See Python logic for final scoring.
   if (!game_over_) {
     return {0.0, 0.0};
   }
@@ -196,7 +229,7 @@ std::vector<double> DurakState::Returns() const {
   // If neither has cards => check deck. If deck is empty => last attacker wins. 
   if (players_with_cards.empty()) {
     if (deck_pos_ >= static_cast<int>(deck_.size())) {
-      // Attacker is winner
+      // attacker wins
       std::vector<double> result(kNumPlayers, 0.0);
       result[attacker_] = 1.0;
       result[1 - attacker_] = -1.0;
@@ -225,7 +258,7 @@ void DurakState::CheckGameOver() {
 
   // If both players have no cards
   if (p0_empty && p1_empty) {
-    // If deck is also empty => game over
+    // If deck is also empty => done
     if (deck_pos_ >= static_cast<int>(deck_.size())) {
       game_over_ = true;
       return;
@@ -237,7 +270,6 @@ void DurakState::CheckGameOver() {
 }
 
 std::string DurakState::ToString() const {
-  // A text representation for debugging/logging.
   std::string str;
   absl::StrAppend(&str, "Phase=", static_cast<int>(phase_),
                   " Attack=", attacker_, " Defend=", defender_,
@@ -272,19 +304,11 @@ bool DurakState::IsChanceNode() const {
 }
 
 std::vector<std::pair<Action, double>> DurakState::ChanceOutcomes() const {
-  // During the initial dealing: 
-  //   each card is chosen from the deck top in a single known order for the next deal.
-  // Probability is 1.0 for that next "forced" card.
-  // Then eventually we reveal the bottom card as trump with probability 1.0.
-  // Implementation is similar to Python.
-
   std::vector<std::pair<Action, double>> outcomes;
   if (cards_dealt_ < kCardsPerPlayer * kNumPlayers) {
-    // The next top card
     int next_card = deck_[deck_pos_];
     outcomes.push_back({next_card, 1.0});
   } else {
-    // reveal the bottom card as trump
     if (trump_card_ < 0) {
       int bottom_card = deck_.back();
       outcomes.push_back({bottom_card, 1.0});
@@ -294,6 +318,7 @@ std::vector<std::pair<Action, double>> DurakState::ChanceOutcomes() const {
 }
 
 void DurakState::ApplyChanceAction(Action outcome) {
+  // If we haven't dealt 6 cards each to both players, deal from top
   if (cards_dealt_ < kCardsPerPlayer * kNumPlayers) {
     // Deal this card to the next player
     int player_idx = cards_dealt_ % kNumPlayers;
@@ -301,9 +326,9 @@ void DurakState::ApplyChanceAction(Action outcome) {
     ++deck_pos_;
     ++cards_dealt_;
   } else {
-    // Reveal the bottom as trump
-    trump_card_ = outcome;
-    trump_suit_ = SuitOf(outcome);
+    // Reveal the last card as trump
+    trump_card_ = deck_.back();
+    trump_suit_ = SuitOf(deck_.back());
     DecideFirstAttacker();
     phase_ = RoundPhase::kAttack;
     round_starter_ = attacker_;
@@ -316,11 +341,9 @@ void DurakState::DoApplyAction(Action move) {
     CheckGameOver();
     return;
   }
-
-  if (game_over_) return;  // No-op if somehow action after terminal.
+  if (game_over_) return;
 
   Player player = CurrentPlayer();
-  // Extra actions?
   if (move >= kNumCards) {
     if (move == kExtraActionTakeCards) {
       DefenderTakesCards();
@@ -333,30 +356,21 @@ void DurakState::DoApplyAction(Action move) {
     return;
   }
 
-  // Otherwise, it's a card index in [0..35].
-  // Must be in player's hand to be valid, or we do nothing if it's invalid
   auto &hand = hands_[player];
   auto it = std::find(hand.begin(), hand.end(), move);
   if (it == hand.end()) {
-    // invalid action
-    return;  // We do no-op if it's not in the player's hand
+    return;  // invalid
   }
 
-  // If Attack phase or Additional phase
   if ((phase_ == RoundPhase::kAttack || phase_ == RoundPhase::kAdditional) &&
       (player == attacker_)) {
-    // Place this card face up on the table (uncovered).
     hand.erase(it);
     table_cards_.push_back(std::make_pair(move, -1));
-    // We remain in Attack. 
     phase_ = RoundPhase::kAttack;
-  }
-  // If Defense phase
-  else if (phase_ == RoundPhase::kDefense && (player == defender_)) {
-    // Find the earliest uncovered card
+  } else if (phase_ == RoundPhase::kDefense && (player == defender_)) {
     int uncovered_index = -1;
     for (int i = 0; i < static_cast<int>(table_cards_.size()); ++i) {
-      if (table_cards_[i].second < 0) {  // not covered
+      if (table_cards_[i].second < 0) {
         uncovered_index = i;
         break;
       }
@@ -364,10 +378,8 @@ void DurakState::DoApplyAction(Action move) {
     if (uncovered_index >= 0) {
       int att_card = table_cards_[uncovered_index].first;
       if (CanDefendCard(move, att_card)) {
-        // Cover the card
         hand.erase(it);
         table_cards_[uncovered_index].second = move;
-        // If all covered => Additional
         bool all_covered = true;
         for (auto &pair : table_cards_) {
           if (pair.second < 0) {
@@ -388,7 +400,7 @@ void DurakState::DoApplyAction(Action move) {
 std::vector<Action> DurakState::LegalActions() const {
   if (game_over_) return {};
   if (IsChanceNode()) {
-    // The set of chance actions is enumerated in ChanceOutcomes().
+    // Return the forced dealing outcome(s)
     std::vector<Action> actions;
     auto co = ChanceOutcomes();
     for (auto &o : co) {
@@ -397,24 +409,19 @@ std::vector<Action> DurakState::LegalActions() const {
     return actions;
   }
 
-  // Otherwise, normal player moves
   std::vector<Action> moves;
   Player player = CurrentPlayer();
   const auto &hand = hands_[player];
 
   if (phase_ == RoundPhase::kAttack || phase_ == RoundPhase::kAdditional) {
     if (player == attacker_) {
-      // The attacker can place certain cards or finish the attack.
-      // Let's be consistent with the python logic about ranks to place:
-      // If table is empty, any card is legal. If not empty, attacker can only
-      // add ranks that appear on the table (att or def side).
       if (table_cards_.empty()) {
-        // attacker can place any card
+        // can place any card
         for (int c : hand) {
           moves.push_back(c);
         }
       } else {
-        // gather ranks from the table
+        // can only place ranks that appear on the table
         std::vector<int> ranks_on_table;
         ranks_on_table.reserve(table_cards_.size() * 2);
         for (auto &pair : table_cards_) {
@@ -423,7 +430,6 @@ std::vector<Action> DurakState::LegalActions() const {
             ranks_on_table.push_back(RankOf(pair.second));
           }
         }
-        // attacker can only play cards whose rank is in ranks_on_table
         for (int c : hand) {
           int r = RankOf(c);
           if (std::find(ranks_on_table.begin(), ranks_on_table.end(), r)
@@ -432,33 +438,27 @@ std::vector<Action> DurakState::LegalActions() const {
           }
         }
       }
-      // Also attacker can FINISH_ATTACK if at least one card is on table
+      // can always FINISH_ATTACK if there's at least 1 card on the table
       if (!table_cards_.empty()) {
         moves.push_back(kExtraActionFinishAttack);
       }
     }
   } else if (phase_ == RoundPhase::kDefense) {
+    // can TAKE_CARDS, or cover earliest uncovered, or FINISH_DEFENSE if none uncovered
     if (player == defender_) {
-      // Defender can TAKE_CARDS, or try to defend each uncovered card,
-      // or FINISH_DEFENSE if no uncovered remain
-      // 1) check if there are uncovered
       bool any_uncovered = false;
       int earliest_uncovered = -1;
       for (int i = 0; i < static_cast<int>(table_cards_.size()); ++i) {
         if (table_cards_[i].second < 0) {
           any_uncovered = true;
           if (earliest_uncovered < 0) earliest_uncovered = i;
-          // break; // If you want to cover any uncovered in any order, you'd code differently
         }
       }
-
       if (!any_uncovered) {
-        // can FINISH_DEFENSE
         moves.push_back(kExtraActionFinishDefense);
       } else {
-        // can TAKE_CARDS
         moves.push_back(kExtraActionTakeCards);
-        // or attempt to cover earliest uncovered
+      // try to cover earliest
         if (earliest_uncovered >= 0) {
           int att_card = table_cards_[earliest_uncovered].first;
           for (int c : hand) {
@@ -471,24 +471,8 @@ std::vector<Action> DurakState::LegalActions() const {
     }
   }
 
-  // Sorted order is nice, but not strictly required
   std::sort(moves.begin(), moves.end());
   return moves;
-}
-
-std::string DurakState::ActionToString(Player /*player*/, Action action_id) const {
-  if (action_id == kExtraActionTakeCards) {
-    return "TAKE_CARDS";
-  } else if (action_id == kExtraActionFinishAttack) {
-    return "FINISH_ATTACK";
-  } else if (action_id == kExtraActionFinishDefense) {
-    return "FINISH_DEFENSE";
-  } else if (action_id >= 0 && action_id < kNumCards) {
-    // kNumCards is 36 in your Durak
-    return absl::StrCat("Play:", CardToString(action_id));
-  } else {
-    return absl::StrCat("UnknownAction(", action_id, ")");
-  }
 }
 
 std::string DurakState::ActionToString(Player /*player*/, Action action_id) const {
@@ -502,9 +486,6 @@ std::string DurakState::ActionToString(Player /*player*/, Action action_id) cons
 }
 
 void DurakState::UndoAction(Player /*player*/, Action /*move*/) {
-  // If you need to implement Undo for algorithms that rely on it, you would
-  // replicate the logic from DoApplyAction in reverse. For now, we can leave it
-  // unimplemented or throw an error if needed.
   SpielFatalError("UndoAction is not implemented for Durak.");
 }
 
@@ -533,15 +514,12 @@ bool DurakState::CanDefendCard(int defense_card, int attack_card) const {
   int def_s = SuitOf(defense_card);
   int def_r = RankOf(defense_card);
 
-  // same suit, higher rank
   if (att_s == def_s && def_r > att_r) {
     return true;
   }
-  // defend with trump if attack is not trump
   if (def_s == trump_suit_ && att_s != trump_suit_) {
     return true;
   }
-  // if both trump, rank must be higher
   if (att_s == trump_suit_ && def_s == trump_suit_ && def_r > att_r) {
     return true;
   }
@@ -564,7 +542,6 @@ void DurakState::DefenderTakesCards() {
 // The attacker decides not to lay more cards
 void DurakState::AttackerFinishesAttack() {
   if (table_cards_.empty()) {
-    // If no cards on table, not much to do.
     return;
   }
   phase_ = RoundPhase::kDefense;
@@ -572,9 +549,10 @@ void DurakState::AttackerFinishesAttack() {
 
 // The defender says "done" if all are covered; else effectively picks up
 void DurakState::DefenderFinishesDefense() {
+  // if uncovered => pick up, else discard
   bool uncovered = false;
   for (auto &pair : table_cards_) {
-    if (pair.second < 0) {  // not covered
+    if (pair.second < 0) {
       uncovered = true;
       break;
     }
@@ -583,7 +561,6 @@ void DurakState::DefenderFinishesDefense() {
     // Takes cards
     DefenderTakesCards();
   } else {
-    // move them to discard, roles swap
     for (auto &pair : table_cards_) {
       discard_.push_back(pair.first);
       if (pair.second >= 0) {
@@ -591,7 +568,6 @@ void DurakState::DefenderFinishesDefense() {
       }
     }
     table_cards_.clear();
-    // swap roles
     Player old_attacker = attacker_;
     attacker_ = defender_;
     defender_ = old_attacker;
@@ -621,11 +597,7 @@ void DurakState::RefillHands() {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Observations: we provide minimal placeholders. 
-// You can expand them to match your Python approach exactly.
-// -----------------------------------------------------------------------------
-
+// Observations (unchanged, placeholders)
 std::string DurakState::InformationStateString(Player player) const {
   // For single-player private info style, it's typically the same as
   // ObservationString if we are only exposing that player's hand.
@@ -633,51 +605,38 @@ std::string DurakState::InformationStateString(Player player) const {
 }
 
 std::string DurakState::ObservationString(Player player) const {
-  // A simple textual summary from that player's viewpoint.
   std::string str = absl::StrCat("Player ", player, " viewpoint. Phase=",
                                  static_cast<int>(phase_),
                                  " Attacker=", attacker_,
                                  " Defender=", defender_, "\n");
   absl::StrAppend(&str, "Trump card: ",
                   (trump_card_ < 0 ? "None" : CardToString(trump_card_)), "\n");
-
-  // Show my hand (private info)
   absl::StrAppend(&str, "My Hand: ");
   for (int c : hands_[player]) {
     absl::StrAppend(&str, CardToString(c), " ");
   }
-  absl::StrAppend(&str, "\n");
-
-  // Public table info
-  absl::StrAppend(&str, "Table: ");
+  absl::StrAppend(&str, "\nTable: ");
   for (auto &pair : table_cards_) {
     int ac = pair.first;
     int dc = pair.second;
     absl::StrAppend(&str, CardToString(ac), "->",
                     (dc < 0 ? "?" : CardToString(dc)), "  ");
   }
-  absl::StrAppend(&str, "\n");
-  absl::StrAppend(&str, "DeckRemaining=", (deck_.size() - deck_pos_), "\n");
+  absl::StrAppend(&str, "\nDeckRemaining=", (deck_.size() - deck_pos_), "\n");
   return str;
 }
 
 void DurakState::InformationStateTensor(Player player,
                                         absl::Span<float> values) const {
-  // We'll do the same as ObservationTensor for now. 
-  // If you want to hide the opponent's hand, do not fill that part, etc.
   ObservationTensor(player, values);
 }
 
-void DurakState::ObservationTensor(Player player, absl::Span<float> values) const {
-  // Flatten into the 157-dim vector we claimed in InformationStateTensorShape.
-  // For demonstration, we will simply fill with 0/1. 
+void DurakState::ObservationTensor(Player player,
+                                   absl::Span<float> values) const {
   SPIEL_CHECK_EQ(values.size(), 157);
   for (int i = 0; i < 157; i++) {
     values[i] = 0.f;
   }
-  // (You would replicate the Python logic that sets bits for player ID, trump_suit,
-  // my_cards, table_attack, table_defense, etc.)
-  // This is left as an exercise/placeholder.
 }
 
 // -----------------------------------------------------------------------------
@@ -690,9 +649,6 @@ DurakObserver::DurakObserver(IIGObservationType iig_obs_type)
 
 void DurakObserver::WriteTensor(const State& observed_state, int player,
                                 Allocator* allocator) const {
-  // The simplest approach is to replicate DurakState::ObservationTensor logic.
-  // We'll just pass it through.
-  // In a more refined approach, you would interpret iig_obs_type_ carefully.
   const DurakState& state = open_spiel::down_cast<const DurakState&>(observed_state);
   auto out = allocator->Get("observation", {157});
   std::vector<float> tmp(157, 0.f);
@@ -704,11 +660,7 @@ void DurakObserver::WriteTensor(const State& observed_state, int player,
 
 std::string DurakObserver::StringFrom(const State& observed_state,
                                       int player) const {
-  // Similarly, we can just pass through to the state's method.
   const DurakState& state = open_spiel::down_cast<const DurakState&>(observed_state);
-  // If iig_obs_type_ has private_info == kSinglePlayer, we show that player's hand.
-  // If private_info == kNone, we might hide it, etc. 
-  // For demonstration, we just do what the state does.
   return state.ObservationString(player);
 }
 

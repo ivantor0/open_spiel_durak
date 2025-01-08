@@ -4,7 +4,7 @@
  * C++ tests for Durak in OpenSpiel.
  */
 
-#include "open_spiel/games/durak.h"
+#include "open_spiel/games/durak/durak.h"
 
 #include "open_spiel/algorithms/get_all_states.h"
 #include "open_spiel/policy.h"
@@ -42,8 +42,30 @@ void BasicDurakTests() {
   testing::RandomSimTestCustomObserver(*LoadGame("durak"), observer, 10);
 }
 
-// Optionally, you can do a get-all-states call if you want to ensure no infinite loops.
-// Beware, though, that Durak can have a large state space. Usually we do something like:
+void SerializeDeserializeTest() {
+  std::shared_ptr<const Game> game = LoadGame("durak");
+  std::unique_ptr<State> state = game->NewInitialState();
+
+  // Simulate some actions
+  // For testing purposes, let's apply some chance actions to reach a certain state
+  while (!state->IsTerminal() && state->CurrentPlayer() == kChancePlayerId) {
+    std::vector<std::pair<Action, double>> outcomes = state->ChanceOutcomes();
+    SPIEL_CHECK_EQ(outcomes.size(), 1);  // deterministic chance outcomes
+    state->ApplyAction(outcomes[0].first);
+  }
+
+  // Apply a player action if possible
+  if (!state->IsTerminal()) {
+    std::vector<Action> legal_actions = state->LegalActions();
+    if (!legal_actions.empty()) {
+      state->ApplyAction(legal_actions[0]);
+    }
+  }
+
+  // Test serialization and deserialization
+  testing::TestSerializeDeserialize(*game, state.get());
+}
+
 void CountStatesTest() {
   std::shared_ptr<const Game> game = LoadGame("durak");
 
@@ -53,8 +75,7 @@ void CountStatesTest() {
       /*depth_limit=*/-1,
       /*include_terminals=*/true,
       /*include_chance_states=*/true);
-  // For Kuhn, we know exactly how many states. For Durak, it can be quite large.
-  // This line is just to show we can call it without errors or infinite recursion:
+  // For Durak, the state space can be large. Just ensure it completes.
   std::cout << "Number of reachable states: " << states.size() << std::endl;
 }
 
@@ -65,6 +86,7 @@ void CountStatesTest() {
 
 int main(int argc, char** argv) {
   open_spiel::durak::BasicDurakTests();
+  open_spiel::durak::SerializeDeserializeTest();
   open_spiel::durak::CountStatesTest();
   return 0;
 }
