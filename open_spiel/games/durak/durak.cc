@@ -414,7 +414,7 @@ std::vector<Action> DurakState::LegalActions() const {
         for (int c : hand) {
           moves.push_back(c);
         }
-      } else {
+      } else if (static_cast<int>(table_cards_.size()) < kCardsPerPlayer && !hands_[defender_].empty()) {
         // can only place ranks that appear on the table
         std::vector<int> ranks_on_table;
         ranks_on_table.reserve(table_cards_.size() * 2);

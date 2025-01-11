@@ -19,12 +19,9 @@ class DurakGameTest(absltest.TestCase):
 
   def test_consistent(self):
     """Checks the Python and C++ Durak implementations are the same."""
-    # Suppose your Python-based Durak is registered as "durak_python"
-    # and your C++ Durak is registered as "durak".
-    # If both are under "durak", you'll need a distinct short_name for one of them.
 
-    python_game = pyspiel.load_game("durak_python")
-    cc_game = pyspiel.load_game("python_durak")
+    python_game = pyspiel.load_game("python_durak")
+    cc_game = pyspiel.load_game("durak")
 
     # We'll compare with two observation types, e.g. perfect_recall or default.
     obs_types = [
