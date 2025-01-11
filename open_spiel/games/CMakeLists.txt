@@ -61,6 +61,8 @@ set(GAME_SOURCES
   dots_and_boxes/dots_and_boxes.h
   durak/durak.cc
   durak/durak.h
+  durak/durak_with_transfers.cc
+  durak/durak_with_transfers.h
   dynamic_routing/dynamic_routing_data.cc
   dynamic_routing/dynamic_routing_data.h
   dynamic_routing/dynamic_routing_utils.cc
