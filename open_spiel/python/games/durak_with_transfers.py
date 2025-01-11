@@ -58,6 +58,7 @@ class ExtraAction(enum.IntEnum):
     TAKE_CARDS = _NUM_CARDS
     FINISH_ATTACK = _NUM_CARDS + 1
     FINISH_DEFENSE = _NUM_CARDS + 2
+    TRANSFER = _NUM_CARDS + 3  # new action for "transfer"
 
 
 class RoundPhase(enum.IntEnum):
@@ -113,7 +114,7 @@ class DurakGame(pyspiel.Game):
 
 
 class DurakState(pyspiel.State):
-    """OpenSpiel state for Durak with multi-card attacking."""
+    """OpenSpiel state for Durak with multi-card attacking and transfers."""
 
     def __init__(self, game: DurakGame):
         super().__init__(game)
@@ -142,6 +143,9 @@ class DurakState(pyspiel.State):
         self._defender = 1
         self._phase = RoundPhase.CHANCE
         self._round_starter = 0  # Who began the current round as attacker?
+
+        # Last perfomed action (for transfer logic)
+        self._last_action = -1
 
         self._game_over = False
 
@@ -310,7 +314,9 @@ class DurakState(pyspiel.State):
                         actions.append(card_to_action(c))
 
             # 2) Allow FINISH_ATTACK only if there's at least one card on the table:
-            if len(self._table_cards) > 0:
+            # Also can't FINISH_ATTACK if transfer was just performed
+            # (has to attack with at least one card)
+            if len(self._table_cards) > 0 and self._last_action != ExtraAction.TRANSFER:
                 actions.append(ExtraAction.FINISH_ATTACK)
 
         elif self._phase == RoundPhase.DEFENSE and (player == self._defender):
@@ -325,6 +331,17 @@ class DurakState(pyspiel.State):
             else:
                 # can TAKE_CARDS
                 actions.append(ExtraAction.TAKE_CARDS)
+
+                # Check if the defender can do a TRANSFER (i.e., put down
+                # additional attacking cards of the same rank as some existing
+                # attacking card on the table) *before* playing any defense card.
+                # Condition: no attack card has been covered yet.
+                if (any(dc is None for (ac, dc) in self._table_cards)  # we have uncovered attacks
+                    and all(dc is None for (ac, dc) in self._table_cards)):  # no defense card played yet
+                    possible_ranks = {rank_of(ac) for (ac, dc) in self._table_cards}
+                    if any(rank_of(c) in possible_ranks for c in self._hands[player]):
+                        actions.append(ExtraAction.TRANSFER)
+
                 # or try to defend each uncovered card
                 for i, att_card in uncovered:
                     # We'll do a "one uncovered card at a time" approach:
@@ -358,6 +375,8 @@ class DurakState(pyspiel.State):
             return f"Unknown ({action})"
 
     def _apply_action(self, action: int):
+        self._last_action = action  # Remember the last action
+
         if self.is_chance_node():
             self._apply_chance_action(action)
             return
@@ -366,6 +385,8 @@ class DurakState(pyspiel.State):
 
         if action >= _NUM_CARDS:
             # Extra action
+            if action == ExtraAction.TRANSFER:
+                self._defender_transfers()
             if action == ExtraAction.TAKE_CARDS:
                 self._defender_takes_cards()
             elif action == ExtraAction.FINISH_ATTACK:
@@ -435,6 +456,16 @@ class DurakState(pyspiel.State):
         if att_s == self._trump_suit and def_s == self._trump_suit and def_r > att_r:
             return True
         return False
+
+    def _defender_transfers(self):
+        """Defender transfers the attack, swapping the roles."""
+        # At this point we have already checked the validity of transfer in _legal_actions
+        # So we just implement the role swapping logic here
+        # After that, basically, current defender becomes just an attacker in ADDITIONAL phase
+        old_attacker = self._attacker
+        self._attacker = self._defender
+        self._defender = old_attacker
+        self._phase = RoundPhase.ADDITIONAL
 
     def _defender_takes_cards(self):
         """Defender picks up all table cards, round ends, same attacker remains."""
