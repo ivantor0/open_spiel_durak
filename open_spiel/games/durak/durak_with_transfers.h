@@ -1,5 +1,5 @@
-#ifndef OPEN_SPIEL_GAMES_DURAK_H_
-#define OPEN_SPIEL_GAMES_DURAK_H_
+#ifndef OPEN_SPIEL_GAMES_DURAK_WITH_TRANSFERS_H_
+#define OPEN_SPIEL_GAMES_DURAK_WITH_TRANSFERS_H_
 
 #include <array>
 #include <memory>
@@ -11,7 +11,7 @@
 #include "open_spiel/spiel.h"
 
 namespace open_spiel {
-namespace durak {
+namespace durak_with_transfers {
 
 // -----------------------------------------------------------------------------
 // Global definitions and constants
@@ -23,6 +23,7 @@ constexpr int kCardsPerPlayer = 6;
 constexpr int kExtraActionTakeCards      = kNumCards;     // 36
 constexpr int kExtraActionFinishAttack   = kNumCards + 1; // 37
 constexpr int kExtraActionFinishDefense  = kNumCards + 2; // 38
+constexpr int kExtraActionTransfer       = kNumCards + 3; // 39  (new for 'transfer')
 
 enum class RoundPhase {
   kChance = 0,
@@ -50,18 +51,21 @@ inline std::string CardToString(int card) {
 void ShuffleDeck(std::mt19937* rng, std::vector<int>& deck, int begin, int end);
 
 // Forward declarations
-class DurakGame;
-class DurakObserver;
+class DurakWithTransfersGame;
+class DurakWithTransfersObserver;
 
 // -----------------------------------------------------------------------------
-// DurakState: the game state container & logic
+// DurakWithTransfersState: the game state container & logic
+//
+// This is based on your original Durak but includes the "transfer" mechanic
+// for the defender (in RoundPhase::kDefense) to swap roles before covering.
 // -----------------------------------------------------------------------------
 
-class DurakState : public State {
+class DurakWithTransfersState : public State {
  public:
-  explicit DurakState(std::shared_ptr<const Game> game, int rng_seed);
-  DurakState(const DurakState&) = default;
-  DurakState& operator=(const DurakState&) = delete;
+  explicit DurakWithTransfersState(std::shared_ptr<const Game> game, int rng_seed);
+  DurakWithTransfersState(const DurakWithTransfersState&) = default;
+  DurakWithTransfersState& operator=(const DurakWithTransfersState&) = delete;
 
   // Core API
   Player CurrentPlayer() const override;
@@ -105,9 +109,10 @@ class DurakState : public State {
   void DefenderFinishesDefense();
   void RefillHands();
   void CheckGameOver();
+  void DefenderTransfers();
 
   // Game state
-  std::vector<int> deck_;  
+  std::vector<int> deck_;
   std::array<std::vector<int>, kNumPlayers> hands_;
   std::vector<std::pair<int, int>> table_cards_;
   std::vector<int> discard_;
@@ -122,7 +127,7 @@ class DurakState : public State {
 
   // Dealing progress: how many total cards have been dealt so far?
   int cards_dealt_ = 0;
-  // Deck position for the next card to be dealt from the top. 
+  // Deck position for the next card to be dealt from the top.
   int deck_pos_ = 0;
 
   // Roles
@@ -131,23 +136,26 @@ class DurakState : public State {
   // Which phase are we in?
   RoundPhase phase_ = RoundPhase::kChance;
 
-  // For reference or special rules: who started this round as attacker?
+  // For reference: who started this round as attacker?
   Player round_starter_ = 0;
+
+  // Track the last action for extra logic
+  Action last_action_ = -1;
 
   // Game over flag
   bool game_over_ = false;
 };
 
 // -----------------------------------------------------------------------------
-// DurakGame
+// DurakWithTransfersGame
 // -----------------------------------------------------------------------------
 
-class DurakGame : public Game {
+class DurakWithTransfersGame : public Game {
  public:
-  explicit DurakGame(const GameParameters& params);
+  explicit DurakWithTransfersGame(const GameParameters& params);
 
   // Implement the base interface:
-  int NumDistinctActions() const override { return kNumCards + 3; }
+  int NumDistinctActions() const override { return kNumCards + 4; }
   std::unique_ptr<State> NewInitialState() const override;
   int MaxChanceOutcomes() const override { return kNumCards; }
   int NumPlayers() const override { return kNumPlayers; }
@@ -155,18 +163,14 @@ class DurakGame : public Game {
   double MaxUtility() const override { return 1.0; }
   absl::optional<double> UtilitySum() const override { return 0.0; }
 
-  // For Durak, a safe upper bound on game length could be fairly high.
   int MaxGameLength() const override { return 300; }
-
-  // We do have up to 12 dealing moves for the initial cards, plus 1 for trump reveal,
-  // so max chance nodes might be 13 for the initial plus a few refills. But 36 is also safe.
   int MaxChanceNodesInHistory() const override { return 36; }
 
   // Observations
   std::vector<int> InformationStateTensorShape() const override;
   std::vector<int> ObservationTensorShape() const override;
 
-  // Construct an observer that knows how to interpret states (see durak.cc).
+  // Construct an observer that knows how to interpret states.
   std::shared_ptr<Observer> MakeObserver(
       absl::optional<IIGObservationType> iig_obs_type,
       const GameParameters& params) const override;
@@ -179,9 +183,9 @@ class DurakGame : public Game {
 // An Observer
 // -----------------------------------------------------------------------------
 
-class DurakObserver : public Observer {
+class DurakWithTransfersObserver : public Observer {
  public:
-  explicit DurakObserver(IIGObservationType iig_obs_type);
+  explicit DurakWithTransfersObserver(IIGObservationType iig_obs_type);
 
   void WriteTensor(const State& observed_state, int player,
                    Allocator* allocator) const override;
@@ -193,7 +197,7 @@ class DurakObserver : public Observer {
   IIGObservationType iig_obs_type_;
 };
 
-}  // namespace durak
+}  // namespace durak_with_transfers
 }  // namespace open_spiel
 
-#endif  // OPEN_SPIEL_GAMES_DURAK_H_
+#endif  // OPEN_SPIEL_GAMES_DURAK_WITH_TRANSFERS_H_
