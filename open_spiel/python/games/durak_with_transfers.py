@@ -70,8 +70,8 @@ class RoundPhase(enum.IntEnum):
 
 
 _GAME_TYPE = pyspiel.GameType(
-    short_name="python_durak",
-    long_name="Python Durak",
+    short_name="python_durak_with_transfers",
+    long_name="Python Durak with transfers",
     dynamics=pyspiel.GameType.Dynamics.SEQUENTIAL,
     chance_mode=pyspiel.GameType.ChanceMode.EXPLICIT_STOCHASTIC,
     information=pyspiel.GameType.Information.IMPERFECT_INFORMATION,
