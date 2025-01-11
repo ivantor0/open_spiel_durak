@@ -3,7 +3,7 @@
 //
 // durak_with_transfers.cc: logic, state transitions, observer, etc.
 
-#include "open_spiel/games/durak_with_transfers.h"
+#include "open_spiel/games/durak/durak_with_transfers.h"
 
 #include <algorithm>
 #include <random>
